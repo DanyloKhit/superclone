@@ -14,6 +14,9 @@ button2_rect = pygame.Rect(WIDTH//2-90, HEIGHT//2+40, 180, 60)
 button_quit_rect = pygame.Rect(WIDTH//2-70, HEIGHT//2+110, 140, 50)
 
 state = "menu"
+running = True
+wave = 0
+wave_cooldown = 0
 clock = pygame.time.Clock()
 
 cx, cy = WIDTH//2, HEIGHT//2
@@ -26,9 +29,27 @@ player_vx = player_vy = 0
 player_fire_cooldown = 250
 player_shot_timer = player_fire_cooldown
 enemy_bullet_speed = 8
+enemy_speed = 2
+TIME_SLOWDOWN = 0.1
+MIN_TIME_SCALE = 0.1
+time_scale = 1.0
+
+WHITE = (255,255,255)
+BLACK = (0,0,0)
+RED = (255,50,50)
+DARK_RED = (150,0,0)
+BLUE = (0,150,255)
+CYAN = (0,255,255)
+YELLOW = (255,255,0)
+ORANGE = (255,165,0)
+PURPLE = (200,0,255)
+PINK = (255,100,200)
+
+enemy_surfs = {}
 
 spawn_timer = 0.0
 spawn_interval = 1500
+max_enemies = 20
 def spawn_wave(n):
     for _ in range(n):
         side = random.choice([0,1,2,3])
@@ -121,14 +142,14 @@ while running:
             spawn_wave(1)
 
         for b in bullets[:]:
+            b['x'] += b['vx'] * time_scale
+            b['y'] += b['vy'] * time_scale
             if b['owner'] == 'player':
-                b['x'] += b['vx'] * time_scale
-                b['y'] += b['vy'] * time_scale
-                screen.blit(bullet_surf_player, (int(b['x'])-4, int(b['y'])-4))
+                pygame.draw.circle(screen, CYAN, (int(b['x']), int(b['y'])), b['r'])
+                pygame.draw.circle(screen, WHITE, (int(b['x']), int(b['y'])), b['r'], 1)
             else:
-                b['x'] += b['vx'] * time_scale
-                b['y'] += b['vy'] * time_scale
-                screen.blit(bullet_surf_enemy, (int(b['x'])-5, int(b['y'])-5))
+                pygame.draw.circle(screen, YELLOW, (int(b['x']), int(b['y'])), b['r'])
+                pygame.draw.circle(screen, WHITE, (int(b['x']), int(b['y'])), b['r'], 1)
             if b['x'] < -50 or b['x'] > WIDTH+50 or b['y'] < -50 or b['y'] > HEIGHT+50:
                 try: bullets.remove(b)
                 except: pass
@@ -177,10 +198,20 @@ while running:
             en['x'] += vx_des * time_scale
             en['y'] += vy_des * time_scale
             surf = enemy_surfs.get(en.get('type','normal'))
-            if surf:
-                screen.blit(surf, (int(en['x'])-surf.get_width()//2, int(en['y'])-surf.get_height()//2))
+            ex = int(en['x']); ey = int(en['y'])
+            size = en.get('r', 16)
+            et = en.get('type', 'normal')
+            if et == 'melee':
+                points = [(ex, ey - size), (ex + size, ey), (ex, ey + size), (ex - size, ey)]
+                pygame.draw.polygon(screen, PINK if et == 'melee' else RED, points)
+                pygame.draw.polygon(screen, WHITE, points, 2)
             else:
-                pygame.draw.circle(screen, (180,20,20), (int(en['x']), int(en['y'])), en['r'])
+                points = [(ex, ey - size), (ex - size, ey + size), (ex + size, ey + size)]
+                col = RED
+                if et == 'fast': col = ORANGE
+                elif et == 'sniper': col = PURPLE
+                pygame.draw.polygon(screen, col, points)
+                pygame.draw.polygon(screen, WHITE, points, 2)
 
             if dist < en['detect']:
                 if en['shot_timer'] >= en['shot_cd']:
@@ -204,7 +235,15 @@ while running:
                     enemies.clear(); bullets.clear(); player_hp = 3
                 break
 
-        screen.blit(player_surf, (int(cx)-cr, int(cy)-cr))
+        mx, my = pygame.mouse.get_pos()
+        angle = math.atan2(my - cy, mx - cx)
+        px = int(cx); py = int(cy)
+        prect = pygame.Rect(px - cr, py - cr, cr*2, cr*2)
+        pygame.draw.rect(screen, BLUE, prect, border_radius=6)
+        pygame.draw.rect(screen, WHITE, prect, 2, border_radius=6)
+        end_x = px + math.cos(angle) * (cr)
+        end_y = py + math.sin(angle) * (cr)
+        pygame.draw.line(screen, WHITE, (px, py), (end_x, end_y), 2)
         hp_s = font.render(f"HP: {player_hp}", True, (255,255,255))
         screen.blit(hp_s, (10,10))
 
