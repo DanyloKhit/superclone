@@ -49,7 +49,7 @@ enemy_surfs = {}
 
 spawn_timer = 0.0
 spawn_interval = 1500
-max_enemies = 20
+max_enemies = 10
 def spawn_wave(n):
     for _ in range(n):
         side = random.choice([0,1,2,3])
@@ -70,7 +70,17 @@ def spawn_wave(n):
             et = 'fast'
         else:
             et = 'normal'
-        enemies.append({'x':ex, 'y':ey, 'vx':0, 'vy':0, 'r':16, 'hp':2, 'type':et, 'shot_timer':0, 'shot_cd':1200, 'detect':400, 'strafe_dir': random.choice([-1,1]), 'strafe_timer':0})
+
+        
+        if et == 'melee':
+            classEt = 5
+        elif et == 'sniper':
+            classEt = 6
+        elif et == 'fast':
+            classEt = 2
+        else:
+            classEt = 3
+        enemies.append({'x':ex, 'y':ey, 'vx':0, 'vy':0, 'r':16, 'hp':classEt, 'type':et, 'shot_timer':0, 'shot_cd':1200, 'detect':400, 'strafe_dir': random.choice([-1,1]), 'strafe_timer':0})
 
 while running:
     dt = clock.tick(60)
