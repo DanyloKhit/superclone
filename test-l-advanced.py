@@ -48,7 +48,7 @@ def download_and_install(name, info, progress_callback=None):
         if expected and h.hexdigest() != expected:
             os.remove(tmp.name)
             raise ValueError("sha256 mismatch")
-        # extract
+        # ..
         extract_dir = os.path.join(RELEASES_DIR, os.path.splitext(name)[0])
         if os.path.exists(extract_dir):
             shutil.rmtree(extract_dir)

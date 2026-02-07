@@ -16,7 +16,7 @@ button_quit_rect = pygame.Rect(WIDTH//2-70, HEIGHT//2+110, 140, 50)
 state = "menu"
 running = True
 wave = 0
-wave_cooldown = 0
+wave_cooldown = 1
 clock = pygame.time.Clock()
 
 cx, cy = WIDTH//2, HEIGHT//2
@@ -49,7 +49,7 @@ enemy_surfs = {}
 
 spawn_timer = 0.0
 spawn_interval = 1500
-max_enemies = 10
+max_enemies = 7
 def spawn_wave(n):
     for _ in range(n):
         side = random.choice([0,1,2,3])
