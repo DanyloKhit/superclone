@@ -24,7 +24,7 @@ title = ctk.CTkLabel(root, text="TIME SLASH", font=("Arial", 28, "bold"))
 title.grid(row=0, column=0, sticky="nsew")
 
 def launch_game():
-    script = os.path.join(os.path.dirname(__file__), "prototype-0.py")
+    script = os.path.join(os.path.dirname(__file__), "release-hotfix.py")
     python = sys.executable or "python"
     try:
         subprocess.Popen([python, script], cwd=os.path.dirname(script))
