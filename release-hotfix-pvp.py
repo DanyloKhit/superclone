@@ -77,6 +77,24 @@ spawn_timer        = 0
 
 slow_shot_count = 0
 player_vx = player_vy = 0
+enemy_spacing_idx = 1
+show_grid = True
+show_time_tint = True
+ENEMY_SPACING = [('SOFT', 0.9), ('BALANCED', 1.25), ('STRONG', 1.65)]
+
+card_mode = 'pve'
+card_target = 0
+pvp_round = 1
+pvp_scores = [0, 0]
+pvp_players = []
+PVP_CARDS = [
+    {'name':'Quickstep', 'desc':'+14% Move Speed', 'type':'speed', 'value':0.14, 'rarity':'common'},
+    {'name':'Hard Shell', 'desc':'+5 Armor', 'type':'armor', 'value':5, 'rarity':'common'},
+    {'name':'Heavy Hands', 'desc':'+4 Damage', 'type':'damage', 'value':4, 'rarity':'common'},
+    {'name':'Steel Heart', 'desc':'+18 Max HP', 'type':'max_hp', 'value':18, 'rarity':'uncommon'},
+    {'name':'Fast Trigger', 'desc':'-16% Fire Cooldown', 'type':'fire_rate', 'value':-0.16, 'rarity':'uncommon'},
+    {'name':'Split Shot', 'desc':'Fire 2 bullets at once', 'type':'multishot', 'value':1, 'rarity':'rare'},
+]
 
 
 def remaining_wave_spawns():
@@ -259,7 +277,6 @@ def spawn_enemy():
            'normal':16,'fast':14,'sniper':15,'teleporter':16}[et]
     scd = {'boss':450,'sniper':1800,'teleporter':1500,'phantom':99999,
            'normal':1400,'fast':1600,'melee':99999,'splitter':1400}[et]
-    # Late-game HP scaling after wave 10
     scale  = 1.0 + max(0, wave-10) * 0.07
     hp     = int(base_hp * scale)
     enemies.append({'x':ex,'y':ey,'r':rad,'hp':hp,'max_hp':hp,'type':et,
@@ -294,8 +311,9 @@ def kill_enemy(en):
         level_up()
 
 def level_up():
-    global player_level, player_xp, xp_to_level, state, card_choices
+    global player_level, player_xp, xp_to_level, state, card_choices, card_mode
     player_level += 1; player_xp -= xp_to_level; xp_to_level += 2
+    card_mode = 'pve'
     avail = [c for c in CARDS
              if (c['name'] not in active_cards or
                  c['type'] in ('lifesteal','damage','max_hp','crit','armor','xp_mult','luck'))
@@ -331,6 +349,60 @@ def apply_card(card):
     elif t=='luck':        player_luck += 1
     elif t=='overdrive':   player_damage=int(player_damage*(1+v[0])); player_base_speed=int(player_base_speed*(1+v[1])); player_speed=player_base_speed
     elif t=='glasscannon': player_damage=int(player_damage*v[0]); cut=int(player_max_hp*abs(v[1])); player_max_hp=max(1,player_max_hp-cut); player_hp=min(player_hp,player_max_hp)
+
+def make_pvp_player(x, y, color, face_x):
+    return {'x':x,'y':y,'r':18,'hp':100,'max_hp':100,'damage':14,'speed':290,'cd':320,
+            'shot_timer':320,'armor':0,'face_x':face_x,'face_y':0,'color':color,'multishot':1}
+
+def reset_pvp(full=False):
+    global pvp_players, pvp_scores, pvp_round, paused, time_scale
+    if full or not pvp_players:
+        pvp_players = [make_pvp_player(W*0.25, H*0.5, BLUE, 1), make_pvp_player(W*0.75, H*0.5, PINK, -1)]
+        pvp_scores = [0, 0]
+        pvp_round = 1
+    for i,p in enumerate(pvp_players):
+        p['x'], p['y'] = (W*0.25, H*0.5) if i == 0 else (W*0.75, H*0.5)
+        p['hp'] = p['max_hp']
+        p['shot_timer'] = p['cd']
+        p['face_x'], p['face_y'] = (1, 0) if i == 0 else (-1, 0)
+    enemies.clear(); bullets.clear(); particles.clear(); paused = False; time_scale = 1.0
+
+def deal_pvp_cards(loser):
+    global state, card_choices, card_mode, card_target
+    card_mode = 'pvp'; card_target = loser
+    card_choices = random.sample(PVP_CARDS, min(3, len(PVP_CARDS)))
+    state = 'cards'
+
+def apply_pvp_card(card, idx):
+    p = pvp_players[idx]
+    t, v = card['type'], card['value']
+    if   t == 'speed':     p['speed'] = int(p['speed'] * (1 + v))
+    elif t == 'armor':     p['armor'] += v
+    elif t == 'damage':    p['damage'] += v
+    elif t == 'max_hp':    p['max_hp'] += v
+    elif t == 'fire_rate': p['cd'] = max(120, int(p['cd'] * (1 + v)))
+    elif t == 'multishot': p['multishot'] = 2
+
+def fire_pvp_bullet(idx):
+    p = pvp_players[idx]
+    if p['shot_timer'] < p['cd']:
+        return
+    p['shot_timer'] = 0
+    ang = math.atan2(p['face_y'], p['face_x'])
+    speed = 760
+    offs = (-0.10, 0.10) if p.get('multishot', 1) > 1 else (0,)
+    for off in offs:
+        a = ang + off
+        bullets.append({'x':p['x'],'y':p['y'],'vx':math.cos(a)*speed,'vy':math.sin(a)*speed,'r':5,'owner':idx})
+
+def draw_pvp_hud():
+    for i,p in enumerate(pvp_players):
+        x = 16 if i == 0 else W - 276
+        bar(x, 16, 260, 22, p['hp']/max(1, p['max_hp']), p['color'])
+        txt(screen, f'P{i+1}  {int(p["hp"])}/{p["max_hp"]}  ARM {p["armor"]}  DMG {p["damage"]}', f_xs, WHITE, x + 130, 28, False)
+    txt(screen, f'ROUND {pvp_round}', f_md, YELLOW, W//2, 24)
+    txt(screen, f'{pvp_scores[0]}  -  {pvp_scores[1]}', f_lg, WHITE, W//2, 62)
+    txt(screen, 'P1 WASD + F  |  P2 Arrows + Right Ctrl  |  Shoot uses last move direction', f_xs, (175,195,225), W//2, H - 26, False)
 
 def shockwave_attack():
     global player_shockwave_cooldown
@@ -368,7 +440,7 @@ def reset_game():
     global player_crit_chance,player_lifesteal_amount,player_armor,player_xp_multiplier
     global player_shockwave_cooldown,special_unlocked,MIN_TIME_SCALE,time_scale,player_luck
     global wave,wave_phase,wave_timer,wave_kills_needed,wave_kills_done,wave_total_spawned
-    global spawn_timer,slow_shot_count,player_vx,player_vy
+    global spawn_timer,slow_shot_count,player_vx,player_vy,enemy_spacing_idx,show_grid,show_time_tint,card_mode
     cx, cy = W//2, H//2
     player_hp=player_max_hp=100; player_damage=10
     player_base_speed=player_speed=300
@@ -380,6 +452,7 @@ def reset_game():
     wave=0; wave_phase='between'; wave_timer=3000
     wave_kills_needed=wave_kills_done=wave_total_spawned=spawn_timer=slow_shot_count=0
     player_vx = player_vy = 0
+    enemy_spacing_idx = 1; show_grid = True; show_time_tint = True; card_mode = 'pve'
     active_cards.clear(); enemies.clear(); bullets.clear(); particles.clear()
 
 def draw_enemy(en):
@@ -429,7 +502,6 @@ def draw_hud():
         bar(12,H-116,140,12, cd_r, GREEN if cd_r>=1 else CYAN,(40,40,55))
         pygame.draw.rect(screen,WHITE,(12,H-116,140,12),1)
         txt(screen,'[R] Shockwave',f_xs,WHITE,68,H-128,False)
-    # Wave info (top-right)
     if wave_phase=='active':
         txt(screen,f'WAVE {wave}',f_md,CYAN,W-170,18)
         txt(screen,f'{wave_kills_done} / {wave_kills_needed} kills',f_sm,WHITE,W-170,46)
@@ -487,7 +559,7 @@ def draw_menu_bg():
                 pygame.draw.line(screen, (60,90,130), (int(a['x']),int(a['y'])),
                                  (int(b['x']),int(b['y'])), 1)
 
-MENU_BTNS = [('PLAY', BLUE), ('SETTINGS', (55,58,75)), ('QUIT', (130,20,20))]
+MENU_BTNS = [('PLAY', BLUE), ('1V1 DUEL', PURPLE), ('SETTINGS', (55,58,75)), ('QUIT', (130,20,20))]
 
 def get_menu_rect(i):
     bw, bh = 340, 68
@@ -495,6 +567,9 @@ def get_menu_rect(i):
 
 def settings_back_rect():
     return pygame.Rect(W//2-170, H-130, 340, 66)
+
+def settings_option_rect(i):
+    return pygame.Rect(W//2-230, 200 + i*92, 460, 62)
 
 def draw_menu():
     draw_menu_bg()
@@ -506,25 +581,34 @@ def draw_menu():
         pygame.draw.rect(screen, tuple(min(255,c+45) for c in col) if hov else col, r, border_radius=14)
         if hov: pygame.draw.rect(screen,WHITE,r,2,border_radius=14)
         txt(screen,label,f_md,WHITE,r.centerx,r.centery)
-    txt(screen,'WASD Move  |  Click Shoot  |  Still = Bullet Time  |  R = Shockwave  |  ESC Pause',
-        f_xs,(100,110,130),W//2,H-30)
+    txt(screen,'PLAY = single-player  |  1V1 DUEL = local multiplayer', f_xs,(118,130,150),W//2,H-54)
+    txt(screen,'Single: WASD + Mouse  |  Duel: P1 WASD/F, P2 Arrows/Right Ctrl', f_xs,(100,110,130),W//2,H-30)
 
 def draw_settings():
     screen.fill(DGRAY)
-    for gx in range(0,W,64): pygame.draw.line(screen,(28,30,42),(gx,0),(gx,H))
-    for gy in range(0,H,64): pygame.draw.line(screen,(28,30,42),(0,gy),(W,gy))
-    txt(screen,'SETTINGS / RELEASE INFO', f_lg, CYAN, W//2, 110)
-    lines = [
-        '• Bullet Time stays slow for the first shot while standing still.',
-        '• Explosive kills now count correctly, so waves cannot soft-lock from splash damage.',
-        '• Wave spawner now refills faster when the arena is too empty.',
-        '• Between waves, stay ready: later waves keep more enemies alive at once.',
-        '• Tip: Shockwave is best saved for dense groups or bosses.'
+    if show_grid:
+        for gx in range(0,W,64): pygame.draw.line(screen,(28,30,42),(gx,0),(gx,H))
+        for gy in range(0,H,64): pygame.draw.line(screen,(28,30,42),(0,gy),(W,gy))
+    txt(screen,'SETTINGS', f_lg, CYAN, W//2, 110)
+    labels = [
+        f'Enemy spacing: {ENEMY_SPACING[enemy_spacing_idx][0]}',
+        f'Background grid: {"ON" if show_grid else "OFF"}',
+        f'Bullet-time tint: {"ON" if show_time_tint else "OFF"}',
     ]
-    for i, line in enumerate(lines):
-        txt(screen, line, f_sm, WHITE, W//2, 210 + i*58)
-    txt(screen,'Enemy colors: red = normal, orange = fast, purple = sniper/teleporter, pink = melee, blue = splitter.',
-        f_xs,(170,190,220),W//2,H-190)
+    hints = [
+        'Cycles how strongly enemies push away from each other.',
+        'Turns the arena grid on or off.',
+        'Toggles the dark slow-motion screen tint.',
+    ]
+    mx, my = pygame.mouse.get_pos()
+    for i, label in enumerate(labels):
+        r = settings_option_rect(i)
+        hov = r.collidepoint(mx, my)
+        pygame.draw.rect(screen, (70,78,104) if hov else (50,54,72), r, border_radius=14)
+        if hov: pygame.draw.rect(screen, WHITE, r, 2, border_radius=14)
+        txt(screen, label, f_md, WHITE, r.centerx, r.centery - 10, False)
+        txt(screen, hints[i], f_xs, (170,190,220), r.centerx, r.centery + 14, False)
+    txt(screen,'Tap a row to change it.', f_xs, YELLOW, W//2, H-190)
     txt(screen,'ESC or BACK returns to the menu.', f_xs, YELLOW, W//2, H-160)
     r = settings_back_rect()
     hov = r.collidepoint(*pygame.mouse.get_pos())
@@ -532,7 +616,6 @@ def draw_settings():
     if hov: pygame.draw.rect(screen, WHITE, r, 2, border_radius=14)
     txt(screen,'BACK', f_md, WHITE, r.centerx, r.centery)
 
-# ── card screen ───────────────────────────────────────────────────────────
 def card_rect(i):
     return pygame.Rect(W//2-480+i*370, H//2-115+30, 310, 230)
 
@@ -540,9 +623,13 @@ def draw_cards():
     screen.fill(DGRAY)
     for gx in range(0,W,64): pygame.draw.line(screen,(28,30,42),(gx,0),(gx,H))
     for gy in range(0,H,64): pygame.draw.line(screen,(28,30,42),(0,gy),(W,gy))
-    txt(screen,f'LEVEL {player_level}  —  Choose Upgrade',f_lg,WHITE,W//2,H//2-195)
-    if player_luck:
-        txt(screen,f'Lucky Draw x{player_luck} — boosting rarer cards',f_xs,GOLD,W//2,H//2-160)
+    if card_mode == 'pvp':
+        txt(screen,f'PLAYER {card_target+1} LOST  —  Pick A Card',f_lg,WHITE,W//2,H//2-195)
+        txt(screen,'The losing player gets the upgrade for the next round.',f_xs,YELLOW,W//2,H//2-160)
+    else:
+        txt(screen,f'LEVEL {player_level}  —  Choose Upgrade',f_lg,WHITE,W//2,H//2-195)
+        if player_luck:
+            txt(screen,f'Lucky Draw x{player_luck} — boosting rarer cards',f_xs,GOLD,W//2,H//2-160)
     mx,my = pygame.mouse.get_pos()
     for i,card in enumerate(card_choices):
         cr  = card_rect(i)
@@ -557,9 +644,6 @@ def draw_cards():
         txt(screen,card['desc'],    f_sm,WHITE, cr.centerx,cr.top+110)
         txt(screen,card['rarity'].upper(),f_xs,rc,cr.centerx,cr.top+165)
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  MAIN LOOP
-# ═══════════════════════════════════════════════════════════════════════════
 running = True
 while running:
     dt     = clock.tick(75)
@@ -570,7 +654,7 @@ while running:
 
         elif e.type == pygame.KEYDOWN:
             if e.key == pygame.K_ESCAPE:
-                if state=='game': paused = not paused
+                if state in ('game','pvp'): paused = not paused
                 elif state=='settings': state = 'menu'
                 elif state != 'cards': running = False
             elif e.key==pygame.K_r and state=='game' and not paused and 'Shockwave' in active_cards:
@@ -581,56 +665,130 @@ while running:
                 for i,_ in enumerate(MENU_BTNS):
                     if get_menu_rect(i).collidepoint(e.pos):
                         if i==0: reset_game(); state='game'
-                        elif i==1: state='settings'
-                        elif i==2: running=False
+                        elif i==1: reset_pvp(True); state='pvp'
+                        elif i==2: state='settings'
+                        elif i==3: running=False
             elif state == 'settings':
                 if settings_back_rect().collidepoint(e.pos):
                     state = 'menu'
+                else:
+                    for i in range(3):
+                        if settings_option_rect(i).collidepoint(e.pos):
+                            if i == 0:
+                                enemy_spacing_idx = (enemy_spacing_idx + 1) % len(ENEMY_SPACING)
+                            elif i == 1:
+                                show_grid = not show_grid
+                            else:
+                                show_time_tint = not show_time_tint
+                            break
             elif state == 'cards':
                 for i,card in enumerate(card_choices):
                     if card_rect(i).collidepoint(e.pos):
-                        apply_card(card); state='game'; break
+                        if card_mode == 'pvp':
+                            apply_pvp_card(card, card_target); pvp_round += 1; reset_pvp(); state='pvp'
+                        else:
+                            apply_card(card); state='game'
+                        break
             elif state == 'game' and not paused:
-                # CLICK-ONLY shooting — no hold-to-fire
                 fire_bullet()
 
-    # ── quick exits for non-game states ─────────────────────────────────
     if state == 'menu':     draw_menu();     pygame.display.flip(); continue
     if state == 'settings': draw_settings(); pygame.display.flip(); continue
     if state == 'cards':    draw_cards();    pygame.display.flip(); continue
 
-    # ── Time scale logic ─────────────────────────────────────────────────
+    if state == 'pvp':
+        keys = pygame.key.get_pressed()
+        screen.fill(DGRAY)
+        if show_grid:
+            for gx in range(0,W,64): pygame.draw.line(screen,(25,27,38),(gx,0),(gx,H))
+            for gy in range(0,H,64): pygame.draw.line(screen,(25,27,38),(0,gy),(W,gy))
+        if not paused:
+            for i,p in enumerate(pvp_players):
+                mx = (keys[pygame.K_d]-keys[pygame.K_a]) if i == 0 else (keys[pygame.K_RIGHT]-keys[pygame.K_LEFT])
+                my = (keys[pygame.K_s]-keys[pygame.K_w]) if i == 0 else (keys[pygame.K_DOWN]-keys[pygame.K_UP])
+                p['shot_timer'] += dt
+                if mx or my:
+                    ln = math.hypot(mx, my) or 1
+                    p['face_x'], p['face_y'] = mx / ln, my / ln
+                    p['x'] = max(24, min(W-24, p['x'] + p['face_x'] * p['speed'] * dt_sec))
+                    p['y'] = max(24, min(H-24, p['y'] + p['face_y'] * p['speed'] * dt_sec))
+            dxp, dyp = pvp_players[0]['x'] - pvp_players[1]['x'], pvp_players[0]['y'] - pvp_players[1]['y']
+            distp = math.hypot(dxp, dyp) or 1
+            overlap = pvp_players[0]['r'] + pvp_players[1]['r'] + 6 - distp
+            if overlap > 0:
+                push_x, push_y = (dxp / distp) * overlap * 0.5, (dyp / distp) * overlap * 0.5
+                pvp_players[0]['x'] += push_x; pvp_players[0]['y'] += push_y
+                pvp_players[1]['x'] -= push_x; pvp_players[1]['y'] -= push_y
+            if keys[pygame.K_f]:
+                fire_pvp_bullet(0)
+            if keys[pygame.K_RCTRL]:
+                fire_pvp_bullet(1)
+            for b in bullets[:]:
+                b['x'] += b['vx'] * dt_sec
+                b['y'] += b['vy'] * dt_sec
+                pygame.draw.circle(screen, CYAN if b['owner'] == 0 else YELLOW, (int(b['x']), int(b['y'])), b['r'])
+                pygame.draw.circle(screen, WHITE, (int(b['x']), int(b['y'])), b['r'], 1)
+                if not (-60 < b['x'] < W+60 and -60 < b['y'] < H+60):
+                    bullets.remove(b); continue
+                target = pvp_players[1 - b['owner']]
+                if math.hypot(target['x'] - b['x'], target['y'] - b['y']) <= target['r'] + b['r']:
+                    target['hp'] -= max(1, pvp_players[b['owner']]['damage'] - target['armor'])
+                    create_particles(b['x'], b['y'], target['color'], 5)
+                    bullets.remove(b)
+                    if target['hp'] <= 0:
+                        pvp_scores[b['owner']] += 1
+                        deal_pvp_cards(1 - b['owner'])
+                        break
+            for p in pvp_players:
+                ang = math.atan2(p['face_y'], p['face_x'])
+                pr = pygame.Rect(int(p['x']-p['r']), int(p['y']-p['r']), p['r']*2, p['r']*2)
+                pygame.draw.rect(screen, p['color'], pr, border_radius=7)
+                pygame.draw.rect(screen, WHITE, pr, 2, border_radius=7)
+                pygame.draw.line(screen, WHITE, (int(p['x']), int(p['y'])), (int(p['x'] + math.cos(ang) * 22), int(p['y'] + math.sin(ang) * 22)), 3)
+            for p in particles[:]:
+                p['x'] += p['vx']*dt_sec; p['y'] += p['vy']*dt_sec; p['life'] -= dt_sec
+                if p['life'] <= 0: particles.remove(p); continue
+                a_ = p['life']/p['max_life']
+                pygame.draw.circle(screen,p['color'],(int(p['x']),int(p['y'])),max(1,int(a_*5)))
+        else:
+            for p in pvp_players:
+                ang = math.atan2(p['face_y'], p['face_x'])
+                pr = pygame.Rect(int(p['x']-p['r']), int(p['y']-p['r']), p['r']*2, p['r']*2)
+                pygame.draw.rect(screen, p['color'], pr, border_radius=7)
+                pygame.draw.rect(screen, WHITE, pr, 2, border_radius=7)
+                pygame.draw.line(screen, WHITE, (int(p['x']), int(p['y'])), (int(p['x'] + math.cos(ang) * 22), int(p['y'] + math.sin(ang) * 22)), 3)
+        draw_pvp_hud()
+        if paused:
+            overlay(185,(0,0,0))
+            txt(screen,'PAUSED', f_lg, WHITE, W//2, H//2-60)
+            txt(screen,'ESC to resume', f_sm, (120,125,135), W//2, H//2+12)
+        pygame.display.flip()
+        continue
+
     keys   = pygame.key.get_pressed()
     moving = keys[pygame.K_w] or keys[pygame.K_a] or keys[pygame.K_s] or keys[pygame.K_d]
 
-    # When moving, reset the slow-shot counter (new "slow session" next time)
     if moving: slow_shot_count = 0
 
-    # Time target:
-    #   Moving                       → full speed (1.0)
-    #   Still, 0 shots fired slow    → bullet time (MIN_TIME_SCALE)
-    #   Still, shot once while slow  → still bullet time (1st shot grace)
-    #   Still, shot ≥2 while slow    → full speed (old behavior resumes)
     if paused:
-        ts_target = time_scale                    # freeze
+        ts_target = time_scale
     elif moving:
         ts_target = 1.0
     elif slow_shot_count >= 2:
-        ts_target = 1.0                           # 2nd+ shot in slow → resumes time
+        ts_target = 1.0
     else:
-        ts_target = MIN_TIME_SCALE                # still slow (0 or 1 shots)
+        ts_target = MIN_TIME_SCALE
 
     time_scale      += (ts_target - time_scale) * 0.18
     scaled_dt_sec    = dt_sec * time_scale
     scaled_dt_ms     = dt    * time_scale
 
-    # ── Background ───────────────────────────────────────────────────────
     screen.fill(DGRAY)
-    for gx in range(0,W,64): pygame.draw.line(screen,(25,27,38),(gx,0),(gx,H))
-    for gy in range(0,H,64): pygame.draw.line(screen,(25,27,38),(0,gy),(W,gy))
+    if show_grid:
+        for gx in range(0,W,64): pygame.draw.line(screen,(25,27,38),(gx,0),(gx,H))
+        for gy in range(0,H,64): pygame.draw.line(screen,(25,27,38),(0,gy),(W,gy))
 
     if not paused:
-        # ── Player movement ──────────────────────────────────────────────
         move_x = (keys[pygame.K_d]-keys[pygame.K_a]) * player_speed
         move_y = (keys[pygame.K_s]-keys[pygame.K_w]) * player_speed
         player_vx, player_vy = move_x * time_scale, move_y * time_scale
@@ -639,7 +797,6 @@ while running:
         player_shot_timer         += dt
         player_shockwave_cooldown  = max(0, player_shockwave_cooldown - dt)
 
-        # ── Wave logic ───────────────────────────────────────────────────
         if wave_phase == 'between':
             wave_timer -= dt
             if wave_timer <= 0:
@@ -667,7 +824,6 @@ while running:
                 wave_phase = 'between'; wave_timer = 4000
                 enemies.clear(); bullets.clear()
 
-        # ── Bullets ──────────────────────────────────────────────────────
         for b in bullets[:]:
             b['x'] += b['vx']*scaled_dt_sec
             b['y'] += b['vy']*scaled_dt_sec
@@ -705,14 +861,11 @@ while running:
                     if player_hp <= 0: reset_game(); state='menu'
                     break
 
-        # ── Enemies ──────────────────────────────────────────────────────
         for en in enemies[:]:
-            # shot/strafe timers scale with time → enemies fire slowly in bullet time
             en['shot_timer']   += scaled_dt_ms
             en['strafe_timer'] += scaled_dt_ms
             en['touch_timer']   = max(0, en.get('touch_timer', 0) - dt)
 
-            # Phantom phasing (real dt so it cycles independently of time scale)
             if en['type'] == 'phantom':
                 en['phase_timer'] += dt
                 if not en['phased'] and en['phase_timer'] > 3800:
@@ -735,11 +888,16 @@ while running:
             dxe,dye  = cx-en['x'], cy-en['y']
             dist_e   = math.hypot(dxe,dye) or 1
             sx = sy  = 0
+            sep_mult = ENEMY_SPACING[enemy_spacing_idx][1]
             for oth in enemies:
                 if oth is en: continue
                 ddx,ddy = en['x']-oth['x'], en['y']-oth['y']
                 ddd = math.hypot(ddx,ddy) or 1
-                if ddd < 34: sx+=ddx/ddd; sy+=ddy/ddd
+                min_sep = en['r'] + oth['r'] + 8
+                if ddd < min_sep:
+                    force = (min_sep - ddd) / min_sep
+                    sx += (ddx / ddd) * force * sep_mult
+                    sy += (ddy / ddd) * force * sep_mult
             spd_m = {'fast':1.48,'boss':0.80,'splitter':1.12,
                      'phantom': 2.15 if en.get('phased') else 0.96,
                      'melee':1.28,'sniper':0.82,'teleporter':0.92,'normal':1.02}.get(en['type'],1.0)
@@ -747,10 +905,17 @@ while running:
             steer_x, steer_y = enemy_move_style(en, dist_e, dxe, dye, sx, sy)
             en['x'] += steer_x * spd * scaled_dt_sec
             en['y'] += steer_y * spd * scaled_dt_sec
+            for oth in enemies:
+                if oth is en: continue
+                ddx, ddy = en['x'] - oth['x'], en['y'] - oth['y']
+                ddd = math.hypot(ddx, ddy) or 1
+                overlap = en['r'] + oth['r'] + 4 - ddd
+                if overlap > 0:
+                    en['x'] += (ddx / ddd) * overlap * 0.55 * sep_mult
+                    en['y'] += (ddy / ddd) * overlap * 0.55 * sep_mult
             en['x'] = max(-120, min(W+120, en['x']))
             en['y'] = max(-120, min(H+120, en['y']))
             draw_enemy(en)
-
 
             if (dist_e < en['detect'] and en['shot_timer'] >= en['shot_cd']
                     and not en.get('phased') and en['type'] not in ('melee','splitter')):
@@ -805,7 +970,7 @@ while running:
     pygame.draw.rect(screen,WHITE,pr,2,border_radius=6)
     pygame.draw.line(screen,WHITE,(int(cx),int(cy)),(int(cx+math.cos(ang)*18),int(cy+math.sin(ang)*18)),2)
 
-    if time_scale < 0.85 and not paused:
+    if show_time_tint and time_scale < 0.85 and not paused:
         overlay(int((1-time_scale)*165),(12,12,28))
 
     if wave_phase == 'starting':
